@@ -1,0 +1,84 @@
+# docker-compose.yml for BD_MART
+# ================================
+# Services: backend (Node.js + Express) + database (PostgreSQL) + Hasura
+# --------------------------------------------
+# Services:
+#   - backend: Node.js Express server
+#   - database: PostgreSQL with PostGIS extension
+#   - hasura: Hasura GraphQL engine (optional)
+# --------------------------------------------
+
+version: '3.8'
+
+services:
+  # --------------------------------------------
+  # Database Service (PostgreSQL + PostGIS)
+  # --------------------------------------------
+  database:
+    image: postgis/postgis:15-3.3
+    container_name: bd_mart_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bd_mart
+      POSTGRES_USER: bd_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_here}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "bd_user", "-d", "bd_mart"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --------------------------------------------
+  # Backend Service (Node.js + Express)
+  # --------------------------------------------
+  backend:
+    build: .
+    container_name: bd_mart_backend
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://bd_user:${POSTGRES_PASSWORD:-secure_password_here}@database:5432/bd_mart
+      - HASURA_GRAPHQL_ENDPOINT=http://hasura:8080/v1/graphql
+      - HASURA_ADMIN_SECRET=${HASURA_ADMIN_SECRET:-admin_secret_key}
+      - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key_min_32_chars}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-1d}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-your_stripe_secret_key}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_your_webhook_secret}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:3000}
+      - NODE_ENV=${NODE_ENV:-development}
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+
+  # --------------------------------------------
+  # Hasura GraphQL Engine (Optional)
+  # --------------------------------------------
+  hasura:
+    image: hasura/graphql-engine:v2.38.0
+    container_name: bd_mart_hasura
+    restart: unless-stopped
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      HASURA_CONNECTORS_PG_DATABASE_URL: postgres://bd_user:${POSTGRES_PASSWORD:-secure_password_here}@database:5432/bd_mart
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_ADMIN_SECRET:-admin_secret_key}
+      # Uncomment if using remote schemas
+      # HASURA_GRAPHQL_REMOTE_SCHEMA_ENDPOINTS: "http://backend:5000"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./hasura/migrations:/hasura/migrations
+      - ./hasura/metadata:/hasura/metadata
+
+volumes:
+  pg_data:
